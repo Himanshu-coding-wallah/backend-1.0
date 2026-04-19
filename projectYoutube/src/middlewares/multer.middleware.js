@@ -10,4 +10,4 @@ const storage = multer.diskStorage({
 })
 // original name is not a good practice because user might upload multiple filles of same name
 
-export const upload = multer({ storage,})
+export const upload = multer({ storage})

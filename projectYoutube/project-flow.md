@@ -110,7 +110,10 @@ connectDB()
 ```
 ---
 ## Small step
-The database connection function will be called multiple time in different files , so it is better to create a utility to call the code and return response
+The database connection function will be called multiple time in different files , so it is better to create a utility to call the code and return response.  
+This utililty will be used for other things also where we return a promise    
+It is mainly for error handling
+
 - `utils` folder
     - `asyncHandler.js` file
 
@@ -420,4 +423,116 @@ const uploadOnCloudinary = async(localFilePath)=>{
 }
 
 export {uploadOnCloudinary}
+```
+
+## Creating route
+#### User.route.js
+When url hits /register, a middleware upload runs and then registerUser controller
+```js
+import { Router } from "express";
+import { registerUser } from "../controllers/user.controller.js";
+import {upload} from "../middlewares/multer.middleware.js";
+
+const router = Router()
+
+router.route("/register").post(
+    upload.fields([
+        {
+            name: "avatar",
+            maxCount: 1
+        },
+        {
+            name: "coverImage",
+            maxCount: 1
+        }
+    ]),
+    registerUser)
+
+export default router
+```
+## Adding user to database
+We use controllers for this.  
+whenever the url hits the route /user we register the user  
+We take the user info and add to the database
+#### Algorithm
+1. Get user details
+2. validation -- not empty
+3. Check if user already exists -- using username and email
+4. Check if user sends files -- avatar 
+5. Upload them to cloudinary , avatar
+6. Create user object --create entry in db
+7. Remove password and refesh token field from response
+8. Check for user creation
+9. Return response
+```js
+import { asyncHandler } from "../utils/asyncHandler.js";
+import {apiErrors} from "../utils/apiErrors.js"
+import {User} from "../models/user.model.js"
+import {uploadOnCloudinary} from "../utils/cloudinary.js"
+import { create } from "node:domain";
+import {apiResponse} from "../utils/apiResponse.js"
+
+const registerUser =  asyncHandler(async(req, res)=>{
+
+    //getting user details
+    const {fullName, email, userName, password} = req.body
+    console.log(email)
+
+    // validation
+    if(
+        [fullName, email, userName, password].some((field)=>(field?.trim() === ""))
+    ){
+        throw new apiErrors(400, "all fields are required")
+    }
+
+    // checking if user already exists by using email
+    const existedUser = User.findOne({
+        $or: [{email}, {userName}]
+    })
+    if(existedUser){
+        throw new apiErrors(409, "user already exists")
+    }
+
+    // checking for images
+    const avatarLocalPath = req.files?avatar[0]?.path : ""
+    const coverImageLocalPath = req.files?coverImage[0]?.path : ""
+
+    if(!avatarLocalPath){
+        throw new apiErrors(400, "avatar file is required")
+    }
+
+    // upload to cloudinary
+    const avatar = await uploadOnCloudinary(avatarLocalPath)
+    const coverImage = await uploadOnCloudinary(coverImageLocalPath)
+
+    if(!avatar){
+        throw new apiErrors(400, "avatar file is required")
+    }
+
+    // create user 
+    const user = await User.create({
+        fullName,
+        avatar: avatar.url,
+        coverImage: coverImage?.url || "",
+        email,
+        password,
+        userName: userName.toLowerCase(),
+    })
+
+    const createdUser = await user.findById(user._id).select(
+        "-password -refreshToken"
+    )
+    
+    if(!createdUser){
+        throw new apiErrors(500, "something went wrong when registering user")
+    }
+
+    return res.status(201).json(
+        new apiResponse(200, createdUser, "user registered successfully")
+    )
+
+
+})
+
+export {registerUser}
 ```
